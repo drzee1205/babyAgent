@@ -1,0 +1,80 @@
+-- Enable the pgvector extension for vector operations
+CREATE EXTENSION IF NOT EXISTS vector;
+
+-- Create the documents table with vector support
+CREATE TABLE IF NOT EXISTS documents (
+    id BIGSERIAL PRIMARY KEY,
+    content TEXT,
+    metadata JSONB,
+    embedding VECTOR(1024),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- Create an index for vector similarity search (using cosine distance)
+CREATE INDEX IF NOT EXISTS documents_embedding_idx 
+ON documents 
+USING ivfflat (embedding vector_cosine_ops)
+WITH (lists = 100);
+
+-- Create a function for semantic search
+CREATE OR REPLACE FUNCTION match_documents(
+    query_embedding VECTOR(1024),
+    match_count INT DEFAULT 5,
+    filter JSONB DEFAULT '{}'
+)
+RETURNS TABLE(
+    id BIGINT,
+    content TEXT,
+    metadata JSONB,
+    similarity FLOAT
+)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN QUERY
+    SELECT
+        documents.id,
+        documents.content,
+        documents.metadata,
+        1 - (documents.embedding <=> query_embedding) AS similarity
+    FROM documents
+    WHERE documents.metadata @> filter
+    ORDER BY documents.embedding <=> query_embedding
+    LIMIT match_count;
+END;
+$$;
+
+-- Create RLS (Row Level Security) policies if needed
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+
+-- Allow authenticated users to read and write
+CREATE POLICY "Allow authenticated users to read documents" 
+ON documents FOR SELECT 
+TO authenticated 
+USING (true);
+
+CREATE POLICY "Allow authenticated users to insert documents" 
+ON documents FOR INSERT 
+TO authenticated 
+WITH CHECK (true);
+
+CREATE POLICY "Allow authenticated users to update documents" 
+ON documents FOR UPDATE 
+TO authenticated 
+USING (true);
+
+CREATE POLICY "Allow authenticated users to delete documents" 
+ON documents FOR DELETE 
+TO authenticated 
+USING (true);
+
+-- Allow anonymous users (for development/testing)
+CREATE POLICY "Allow anon users to read documents" 
+ON documents FOR SELECT 
+TO anon 
+USING (true);
+
+CREATE POLICY "Allow anon users to insert documents" 
+ON documents FOR INSERT 
+TO anon 
+WITH CHECK (true);
